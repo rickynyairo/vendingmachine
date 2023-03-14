@@ -64,7 +64,7 @@ def register():
     role = request.json.get("role", "buyer")
 
     if not username or not password:
-        abort(400, "Username and password are required")
+        return jsonify({"error":"Username and password are required"}), 400
 
     existing_user = User.query.filter_by(username=username).first()
     if existing_user:
@@ -95,7 +95,7 @@ def login():
 @auth_required(role="seller")
 def list_users():
     users = User.query.all()
-    return jsonify([user.serialize() for user in users])
+    return jsonify([user.serialize() for user in users]), 200
 
 
 @app.get("/users/<int:user_id>")
@@ -103,8 +103,8 @@ def list_users():
 def get_user(user_id):
     user = User.query.get(user_id)
     if not user:
-        abort(404, "User not found")
-    return jsonify(user.serialize())
+        return jsonify({"error":"User not found"}), 404
+    return jsonify(user.serialize()), 200
 
 
 
@@ -112,17 +112,16 @@ def get_user(user_id):
 @auth_required(role="seller|buyer")
 def delete_user(user_id):
     if(request.user_id != user_id):
-        abort(403, "Cannot delete another user")
+        return jsonify({"error": "Cannot delete another user"}), 403
     user = User.query.get(user_id)
     if not user:
-        abort(404, "User not found")
+        return jsonify({"error":"User not found"}), 404
     db.session.delete(user)
     db.session.commit()
-    return jsonify({"message": "User deleted"})
+    return jsonify({"message": "User deleted"}), 200
 
 
 # Product routes
-
 
 @app.get("/products")
 def list_products():
@@ -135,26 +134,29 @@ def list_products():
 def get_product(product_id):
     product = Product.query.get(product_id)
     if not product:
-        abort(404, "Product not found")
+        return jsonify({"error":"Product not found"}), 404
     return jsonify(product.serialize())
 
 
 @app.post("/products")
 @auth_required(role="seller")
 def create_product():
-    amount_available = request.json.get("amount_available")
+    amount_available = request.json.get("amount_available", 0)
     cost = request.json.get("cost")
-    product_name = request.json.get("product_name")
-    seller_id = request.json.get("seller_id")
-    if not all([amount_available, cost, product_name, seller_id]):
-        abort(400, "All fields are required")
+    product_name = request.json.get("name")
+    seller_id = request.user_id
+    if not all([amount_available, cost, product_name]):
+        return jsonify({"error":"All fields are required"}), 404
+    
     seller = User.query.get(seller_id)
+    
     if not seller:
-        abort(404, "Seller not found")
+        return jsonify({"error":"Seller not found"}), 404
+
     product = Product(
         amount_available=amount_available,
         cost=cost,
-        product_name=product_name,
+        name=product_name,
         seller=seller
     )
     db.session.add(product)
@@ -167,20 +169,22 @@ def create_product():
 def update_product(product_id):
     product = Product.query.get(product_id)
     if not product:
-        abort(404, "Product not found")
+        return jsonify({"error":"Product not found"}), 404
     if (product.seller_id != request.user_id):
-        abort(403, "Cannot update another seller's product")
+        return jsonify({"error":"Cannot update another seller's product"}), 403
 
     amount_available = request.json.get("amount_available", product.amount_available)
     cost = request.json.get("cost", product.cost)
-    product_name = request.json.get("product_name", product.product_name)
+    product_name = request.json.get("name", product.name)
     seller_id = request.user_id
+    
     seller = User.query.get(seller_id)
     if not seller:
-        abort(404, "Seller not found")
+       return jsonify({"error":"Seller not found"}), 404
+
     product.amount_available = amount_available
     product.cost = cost
-    product.product_name = product_name
+    product.name = product_name
     product.seller = seller
     db.session.commit()
     return jsonify({"message": "Product updated", "product": product.serialize()})
@@ -191,11 +195,11 @@ def update_product(product_id):
 def delete_product(product_id):
     product = Product.query.get(product_id)
     if not product:
-        abort(404, "Product not found")
+        return jsonify({"error":"Product not found"}), 404
 
     if (product.seller_id != request.user_id):
-        abort(403, "Cannot delete another seller's product")
-    
+         return jsonify({"error":"Cannot delete another seller's product"}), 403
+
     db.session.delete(product)
     db.session.commit()
     return jsonify({"message": "Product deleted"})
@@ -208,10 +212,12 @@ def deposit():
     user_id = request.user_id
     coin = request.json.get("coin")
     if coin not in [5, 10, 20, 50, 100]:
-        abort(400, "Invalid coin")
+        return jsonify({"error":"Invalid coin"}), 400
+    
     user = User.query.get(user_id)
     if not user:
-        abort(404, "User not found")
+        return jsonify({"error":"User not found"}), 404
+
     user.deposit += coin
     db.session.commit()
     return jsonify({"message": "Deposit added", "user": user.serialize()})
@@ -224,15 +230,20 @@ def buy():
     product_id = request.json.get("product_id")
     amount = request.json.get("amount", 1)
     user = User.query.get(user_id)
+    
     if not user:
-        abort(404, "User not found")
+        return jsonify({"error":"User not found"}), 404
+
     product = Product.query.get(product_id)
     if not product:
-        abort(404, "Product not found")
+        return jsonify({"error":"Product not found"}), 404
+
     if product.amount_available < amount:
-        abort(400, "Not enough products available")
+        return jsonify({"error":"Insufficient products available"}), 400
+
     if user.deposit < amount * product.cost:
-        abort(400, "Not enough funds")
+        return jsonify({"error":"Insufficient funds"}), 400
+
     user.deposit -= amount * product.cost
     product.amount_available -= amount
     db.session.commit()
@@ -244,13 +255,10 @@ def buy():
         if count > 0:
             remaining -= count * coin
             change += [coin] * count
-    return jsonify(
-        {
+    return jsonify({
             "message": "Purchase successful",
             "product": product.serialize(),
-            "change": change,
-        }
-    )
+            "change": change}), 200
 
 
 @app.post("/reset")
@@ -259,7 +267,7 @@ def reset_deposit():
     user_id = request.user_id
     user = User.query.get(user_id)
     if not user:
-        abort(404, "User not found")
+        return jsonify({"error":"User not found"}), 404
     user.deposit = 0
     db.session.commit()
     return jsonify({"message": "Deposit reset", "user": user.serialize()})
